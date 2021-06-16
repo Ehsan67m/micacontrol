@@ -23,15 +23,17 @@ REF_BAND = "RedEdge"
 
 ## To do the alignment, can be changed for images from far distance with fewer features (faster)
 MAX_FEATURES = 10000
-GOOD_MATCH_PERCENT = 0.1
+GOOD_MATCH_PERCENT = 0.3
 
 ## To crop image after alignment
 MAX_CROP_PERCENT=0.15
 MAX_UNCROPED=300
 
 ## To detect changes in bands, TODO: need to find it by more data or use calibration panel data
+#MIN_CHANGE=(80, 80, 50, 50)
+#MAX_CHANGE=(90, 90, 110, 110)
 MIN_CHANGE=(70, 70, 50, 50)
-MAX_CHANGE=(150, 150, 110, 110)
+MAX_CHANGE=(150, 150, 150, 150)
 
 ## Default timer period (second) = period between each capture (in addition to the image processing required time if it is active)
 DEFAULT_TIMER = 0
@@ -291,13 +293,13 @@ def alignFiveBands(images, refIndex, cap_name):
 			homographies.append(h)
 			bands.append(band)
 	if args.print_mod:
-		if args.storage !="NO":
+		if args.storage_mod !="NO":
 			print("All images aligned and saved.")
 		else:
 			print("All images aligned.")
 	return bands, homographies
    except:
-	raise Exception ("Can not align all images")
+	raise
 
 
 def alignByHomography (bandImage, bandHomography, refImage):
@@ -330,7 +332,7 @@ def alignAllByHomography (images, homographies, refIndex, cap_name):
 			if args.storage_mod == "ALL":
 				cv2.imwrite(path+cap_name+"AH_{}.tif".format(imageIndex+1),images[refIndex])
 	if args.print_mod:
-		if args.storage !="NO":
+		if args.storage_mod !="NO":
 			print("All images aligned by using homographies and saved.")
 		else:
 			print("All images aligned by using homographies.")
@@ -425,7 +427,7 @@ def cropAlignedFiveBands(bands, refIndex, maxCrop, cap_name):
 			if args.storage_mod == "ALL":
 				cv2.imwrite(path + cap_name + "C_A_{}.tif".format(imageIndex+1), bandsCropped[imageIndex])
 	if args.print_mod:
-		if args.storage !="NO":
+		if args.storage_mod !="NO":
 			print("All images cropped and saved.")
 		else:
 			print("All images cropped.")
@@ -489,7 +491,7 @@ def detectChanges(bandsCropped, minChange, maxChange):
 	AND3 = cv2.dilate(AND3, kernel2, iterations=1)
 
 	detected=AND1+AND2+AND3
-	detected[detected>0]=60
+	detected[detected>60]=60
 	detected = cv2.erode(detected, kernel1, iterations=1)
 	detected = cv2.dilate(detected, kernel2, iterations=1)
 
@@ -745,9 +747,9 @@ if __name__ == '__main__':
 			cv2.imwrite(path+ cap_name +"_redNIR.tif", redNIR)
 			cv2.imwrite(path+ cap_name +"_edgeNIR.tif", edgeNIR)
 			cv2.imwrite(path+ cap_name +"_detected.tif", detected)
-			cv2.imwrite(path+ cap_name +"_detectedBGR.tif", cv2.merge([(bandsCropped[0]-detected), (bandsCropped[1]-detected), (bandsCropped[3]-detected)]))
+			cv2.imwrite(path+ cap_name +"_detectedBGR.tif", cv2.merge([(bandsCropped[0]-detected), (bandsCropped[1]-detected), (bandsCropped[2]-detected)]))
 		elif  cap_name is not None and (args.storage_mod == "MIN"):
-			cv2.imwrite(path+ cap_name +"_detectedBGR.tif", cv2.merge([(bandsCropped[0]-detected), (bandsCropped[1]-detected), (bandsCropped[3]-detected)]))
+			cv2.imwrite(path+ cap_name +"_detectedBGR.tif", cv2.merge([(bandsCropped[0]-detected), (bandsCropped[1]-detected), (bandsCropped[2]-detected)]))
 	
 
 	if (resp is None) and (args.image_path is None):
