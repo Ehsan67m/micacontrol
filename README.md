@@ -101,3 +101,5 @@ Will start the capturing above 5 (3+2) m and will continue capturing every 0 sec
 ```bash
 python2.7 control_micasense.py -ali NO
 ```
+
+NOTE: By pressing Enter key, the process will be finished and the "ready to power down" command will be sent to the camera. The camera will then unmount the SD card safely. Even by re-running the code, the SD card is still unmounted. To mount the SD card again the camera should be turned off and on again.
