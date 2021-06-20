@@ -1,5 +1,5 @@
 # micacontrol
-This repository contains the python script to control the [MicaSense RedEdge-MX](https://micasense.com/rededge-mx/) camera without the SkyPort kit but with the [DJI Manifold 2-G](https://www.dji.com/ca/manifold-2) to do some onboard pixel-based image processing.
+This repository contains the python script to control the [MicaSense RedEdge-MX](https://micasense.com/rededge-mx/) camera without the SkyPort kit but with the [DJI Manifold 2-G](https://www.dji.com/ca/manifold-2) to do some onboard pixel-based image processing. To communicate with and control the camera, the [HTTP API](http://micasense.github.io/rededge-api/api/http.html) has been used. To powerup the camera, a DC-DC converter or [Power Distribution Borad](https://www.amazon.ca/s?k=power+distribution+board+bec+6s&dc&ref=a9_sc_1) is needed to reduce the 24v of the DJI power distributor, or the PSDK connector, to the working range of the camera which is 4.2v to 15.8v.
 
 ## Requirements
 OpenCV
