@@ -44,7 +44,7 @@ def figure_init():
 
 def callback(bands):
 	try:
-		global lastCaptureTime
+		global lastShowTime
 		global platformRelease
 		if not rospy.is_shutdown():
 			for imageIndex in range(5):
@@ -55,8 +55,8 @@ def callback(bands):
 				rospy.loginfo(bands.time_string)
 			print("===========================")
 			period_time=((datetime.now()-lastShowTime).total_seconds())
-			if ( period_time > 4) or ((platformRelease >4) and (period_time > 1.5)):
-				lastCaptureTime=datetime.now()
+			if ( period_time > 0) or ((platformRelease >4) and (period_time > 1.5)):
+				lastShowTime=datetime.now()
 				### lowspeed loop!
 				width = int(bands.raw_bands[0].width * 25 / 100)
 				height = int(bands.raw_bands[0].height * 25 / 100)
@@ -88,9 +88,9 @@ if __name__ == '__main__':
 	print("Close figure window to exit.")
 	print('ROS node "mipviewer" subscribes to "detect_viewer" topic to receive "micasense_ros/Multispectral" messages and show multispectral bands and image processing results.')
 	try:
-		lastCaptureTime=datetime.now()
+		lastShowTime=datetime.now()
 		rospy.init_node('mipviewer',anonymous=False,disable_signals=False)
-		rospy.Subscriber("detect_data",Multispectral,callback)
+		rospy.Subscriber("detect_viewer",Multispectral,callback)
 		init_flag=False
 		while True:
 			if rospy.is_shutdown():
