@@ -103,3 +103,8 @@ python2.7 control_micasense.py -ali NO
 ```
 
 NOTE: By pressing Enter key, the process will be finished and the "ready to power down" command will be sent to the camera. The camera will then unmount the SD card safely. Even by re-running the code, the SD card is still unmounted. To mount the SD card again the camera should be turned off and on again.
+
+## ROS
+The code is divided into 4 scripts to have the ROS package. The micasense_control.py is for communicating with the Micasense camera and publish the captured images on the ROS topic. The micasense_image_processor.py will use the published images to create a BGR image and do the pixel-based detection. Then it will publish results on two different topics. Each python script has a viewer, that shows images (resized images).
+The below image, shows the structure of the ROS nodes and topics:
+![alt text](https://github.com/Ehsan67m/micacontrol/blob/main/Screenshot.png?raw=true)
