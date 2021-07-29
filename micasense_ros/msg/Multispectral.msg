@@ -1,7 +1,7 @@
 string capture_id
 string file_name
 string time_string
-
+string GPS_source
 # Latitude [degrees]. Positive is north of equator; negative is south.
 float64 latitude
 

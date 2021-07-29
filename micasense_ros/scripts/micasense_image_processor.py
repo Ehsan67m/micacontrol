@@ -65,13 +65,13 @@ parser.add_argument("-reali", "--realignment",dest = "realignment_alt", help="Re
 parser.add_argument("-st", "--storage",dest = "storage_mod", help="Storage mode on Manifold memory: NO, MIN, ALL (default: MIN)", choices=['NO', 'MIN', 'ALL'])
 
 args = parser.parse_args()
-
+process_done=False
 total_detection=0
 total_image_sets=0
-altitude=0
-lastAltitude=0
-homographies = []
-warp_matrix = np.eye(2, 3, dtype=np.float32)
+altitude=0.0
+lastAltitude=0.0
+homographie_flag=False
+
 criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, ITERATIONS,  TERMINATION)
 
 def get_gradient(im) :
@@ -81,7 +81,6 @@ def get_gradient(im) :
 	return grad
 
 def alignImages(im2Gray, im1Gray):
-	global warp_matrix
 	global criteria
 	## Convert images to grayscale although they are from one band
 	#im1Gray = cv2.cvtColor(im1, cv2.COLOR_BGR2GRAY)
@@ -93,6 +92,7 @@ def alignImages(im2Gray, im1Gray):
 	im1Gray[im1Gray==255]=254
 	im2Gray[im2Gray==0]=1
 	im2Gray[im2Gray==255]=254
+	warp_matrix = np.eye(2, 3, dtype=np.float32)
 	try:
 		(cc, warp_matrix) = cv2.findTransformECC (get_gradient(im1Gray),get_gradient(im2Gray),warp_matrix, cv2.MOTION_TRANSLATION, criteria)
 		im2_aligned = cv2.warpAffine(im2Gray, warp_matrix, (sz[1],sz[0]), flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP);
@@ -137,11 +137,16 @@ def alignFiveBands(images, refIndex, cap_name):
 		raise
 
 
-def alignByHomography (bandImage, bandHomography, refImage):
-	height, width, channels = refImage.shape
-	alignedImg = cv2.warpPerspective(bandImage, bandHomography, (width, height))
-	bandA=alignedImg[:,:,0]
-	return bandA
+def alignByHomography (im2Gray, bandHomography):
+	sz = im2Gray.shape
+	height = sz[0]
+	width = sz[1]
+	im2Gray[im2Gray==0]=1
+	im2Gray[im2Gray==255]=254
+	im2Gray[im2Gray==0]=1
+	im2Gray[im2Gray==255]=254
+	im2_aligned = cv2.warpAffine(im2Gray, bandHomography, (sz[1],sz[0]), flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP);
+	return im2_aligned
 
 def alignAllByHomography (images, homographies, refIndex, cap_name):
 	## Read reference image an band
@@ -155,13 +160,12 @@ def alignAllByHomography (images, homographies, refIndex, cap_name):
 	for imageIndex in range(5):
 		if imageIndex != refIndex:
 			print("Aligning %s Band..." % (BAND_NAME[imageIndex]))
-			bandA= alignByHomography (images[imageIndex], homographies[imageIndex], images[refIndex])
+			bandA= alignByHomography (images[imageIndex], homographies[imageIndex])
 			if args.storage_mod == "ALL":
 				cv2.imwrite(path+cap_name+"AH_{}.tif".format(imageIndex+1),bandA)
 			bands.append(bandA)
 		else:
-			band=images[refIndex][:,:,0]
-			bands.append(band)
+			bands.append(images[refIndex])
 			if args.storage_mod == "ALL":
 				cv2.imwrite(path+cap_name+"AH_{}.tif".format(imageIndex+1),images[refIndex])
 	if args.storage_mod !="NO":
@@ -261,6 +265,7 @@ def cropAlignedFiveBands(bands, refIndex, maxCrop, cap_name):
 	return bandsCropped
 
 def detectChanges(bandsCropped, minChange, maxChange):
+	#TODO: Need to be changed on the manifold (it works fine on ubuntu 18 not ubuntu 16)
 	global altitude
 	detected_point=Point()
 	kernel1 = np.ones((3,3), np.uint8)
@@ -388,7 +393,7 @@ def detectChanges(bandsCropped, minChange, maxChange):
 	detected3 = cv2.dilate(detected3, kernel2, iterations=1)
 	detected3[detected3<60]=0
 	detected3[detected3>50]=60
-
+	detected3 = cv2.convertScaleAbs(detected3, alpha=0.03)
 	contours = cv2.findContours(detected3,cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 	contours=imutils.grab_contours(contours)
 	for c in contours:
@@ -423,21 +428,36 @@ def check_inputs():
 			args.realignment_alt=DEFAULT_REALI
 
 		if (args.storage_mod is None):
-			args.storage_mod = "ALL"
+			#args.storage_mod = "ALL"
+			args.storage_mod = "NO"
+			#args.storage_mod = "MIN"
 	except:
 		raise
+
+def listener_new():
+	global process_done
+	msg=rospy.wait_for_message('capture_data', Multispectral)
+	if process_done==False:
+		callback(msg)
+	else:
+		return
 
 def callback(captured_bands):
 	global lastAltitude
 	global altitude
 	global total_detection
 	global total_image_sets
-	global homographies
+	global previous_homographie
+	global homographie_flag
+	global process_done
 	result_images=Multispectral()
 	bridge=CvBridge()
 	bands =None
-	cropped =False
+	GPS_source="Unknown"
+	process_done=True
 	if not rospy.is_shutdown():
+		os.system('cls' if os.name== 'nt' else 'clear')
+		GPS_source=captured_bands.GPS_source
 		altitude=captured_bands.altitude
 		result_images.capture_id=captured_bands.capture_id
 		result_images.time_string=captured_bands.time_string
@@ -448,59 +468,75 @@ def callback(captured_bands):
 		imgs=[]
 		for imageIndex in range(5):
 			result_images.raw_bands.append(captured_bands.raw_bands[imageIndex])
-			img=bridge.imgmsg_to_cv2(captured_bands.raw_bands[imageIndex],"8UC1")
+			img=bridge.imgmsg_to_cv2(captured_bands.raw_bands[imageIndex],"16UC1")
 			imgs.append(img)
-		if altitude== 0.0:
-			print("The altitude is Unkown, Do new alignment:") 
-			bands, homographies = alignFiveBands(imgs, BAND_NAME.index(REF_BAND),captured_bands.capture_id)
-		elif (abs(lastAltitude-altitude) > args.realignment_alt):
+		if captured_bands.raw_bands[0].header.seq is not None:
+			print('Saving the results at path "'+path+'" : '+ args.storage_mod)
+			print("Processing sets number: %d" % captured_bands.raw_bands[0].header.seq)
+		if (GPS_source=="Unknown") and (homographie_flag==False):
+			print("The altitude is Unknown, Do new alignment:") 
+			bands, previous_homographie = alignFiveBands(imgs, BAND_NAME.index(REF_BAND),captured_bands.capture_id)
+			homographie_flag=True
+		elif (GPS_source != "Unknown") and (abs(lastAltitude-altitude) > args.realignment_alt):
 			## read GPS data (altitude) to align again and create Homography
 			print("The altitude changed more than %dm, Do new alignment:" % args.realignment_alt) 
-			bands, homographies = alignFiveBands(imgs, BAND_NAME.index(REF_BAND),captured_bands.capture_id)
+			bands, previous_homographie = alignFiveBands(imgs, BAND_NAME.index(REF_BAND),captured_bands.capture_id)
+			homographie_flag=True
 		else:
 			## using the homography
 			print("The altitude changes was bellow %dm, Use previous alignment data:" % args.realignment_alt)
-			bands= alignAllByHomography(imgs, homographies, BAND_NAME.index(REF_BAND),captured_bands.capture_id)
+			bands= alignAllByHomography(imgs, previous_homographie, BAND_NAME.index(REF_BAND),captured_bands.capture_id)
+
   	
 		if bands is not None:
 			## Crop aligned images
 			print("Cropping images...")
 			maxCrop= captured_bands.raw_bands[BAND_NAME.index(REF_BAND)].height*MAX_CROP_PERCENT
+			bandsCropped=None
 			bandsCropped =cropAlignedFiveBands(bands, BAND_NAME.index(REF_BAND), maxCrop,captured_bands.capture_id)
-			cropped = True
-			if ((args.storage_mod == "ALL") or (args.storage_mod == "MIN")):
-				cv2.imwrite(path+ captured_bands.capture_id +"_BGR.tif", cv2.merge([bandsCropped[0],bandsCropped[1],bandsCropped[2]]))
-			bgr_image=cv2.merge([bandsCropped[0],bandsCropped[1],bandsCropped[2]])
-			msg=bridge.cv2_to_imgmsg(bgr_image,"8UC3")
-			result_images.raw_bands.append(msg)
+			if any(x is not None for x in bandsCropped):
+			#if bandsCropped is not None:
+				if ((args.storage_mod == "ALL") or (args.storage_mod == "MIN")):
+					cv2.imwrite(path+ captured_bands.capture_id +"_BGR.tif", cv2.merge([bandsCropped[0],bandsCropped[1],bandsCropped[2]]))
+				bgr_image=cv2.merge([bandsCropped[0],bandsCropped[1],bandsCropped[2]])
+				try:
+					msg=bridge.cv2_to_imgmsg(bgr_image,"16UC3")
+				except:
+					msg=bridge.cv2_to_imgmsg(bands[0],"16UC1")
+				result_images.raw_bands.append(msg)
 			
-			print("Detecting in images...")
-			blueNIR , greenNIR , redNIR , edgeNIR, detected = detectChanges(bandsCropped, MIN_CHANGE, MAX_CHANGE)
-			if args.storage_mod == "ALL":
-				cv2.imwrite(path+ captured_bands.capture_id +"_blueNIR.tif", blueNIR)
-				cv2.imwrite(path+ captured_bands.capture_id +"_greenNIR.tif", greenNIR)
-				cv2.imwrite(path+ captured_bands.capture_id +"_redNIR.tif", redNIR)
-				cv2.imwrite(path+ captured_bands.capture_id +"_edgeNIR.tif", edgeNIR)
-				cv2.imwrite(path+ captured_bands.capture_id +"_detected.tif", detected)
-				cv2.imwrite(path+ captured_bands.capture_id +"_detectedBGR.tif", cv2.merge([(bandsCropped[0]-detected), (bandsCropped[1]-detected), (bandsCropped[2]-detected)]))
-			elif args.storage_mod == "MIN":
-				cv2.imwrite(path+ captured_bands.capture_id +"_detectedBGR.tif", cv2.merge([(bandsCropped[0]-detected), (bandsCropped[1]-detected), (bandsCropped[2]-detected)]))
+				print("Detecting in images...")
+				blueNIR , greenNIR , redNIR , edgeNIR, detected = detectChanges(bandsCropped, MIN_CHANGE, MAX_CHANGE)
+				if args.storage_mod == "ALL":
+					cv2.imwrite(path+ captured_bands.capture_id +"_blueNIR.tif", blueNIR)
+					cv2.imwrite(path+ captured_bands.capture_id +"_greenNIR.tif", greenNIR)
+					cv2.imwrite(path+ captured_bands.capture_id +"_redNIR.tif", redNIR)
+					cv2.imwrite(path+ captured_bands.capture_id +"_edgeNIR.tif", edgeNIR)
+					cv2.imwrite(path+ captured_bands.capture_id +"_detected.tif", detected)
+					cv2.imwrite(path+ captured_bands.capture_id +"_detectedBGR.tif", cv2.merge([(bandsCropped[0]-detected), (bandsCropped[1]-detected), (bandsCropped[2]-detected)]))
+				elif args.storage_mod == "MIN":
+					cv2.imwrite(path+ captured_bands.capture_id +"_detectedBGR.tif", cv2.merge([(bandsCropped[0]-detected), (bandsCropped[1]-detected), (bandsCropped[2]-detected)]))
 
-			detected_image=cv2.merge([(bandsCropped[0]-detected), (bandsCropped[1]-detected), (bandsCropped[2]-detected)])
-			msg=bridge.cv2_to_imgmsg(detected_image,"8UC3")
-			result_images.raw_bands.append(msg)
-			impub.publish(result_images)
+				detected_image=cv2.merge([(bandsCropped[0]-detected), (bandsCropped[1]-detected), (bandsCropped[2]-detected)])
+				msg=bridge.cv2_to_imgmsg(detected_image,"16UC3")
+				result_images.raw_bands.append(msg)
+				print("Result published!")
+				impub.publish(result_images)
+			else:
+				print("Error during cropping")
 		lastAltitude=altitude
+	process_done=False
 
 
 if __name__ == '__main__':
-	rospy.Subscriber("capture_data",Multispectral,callback)
+	
 	platformRelease=int(platform.release()[0])
 	print("Platform release first number: %d" % platformRelease)
 	print('ROS node "miprocessor" subscribes to the "capture_data" topic to receive the "micasense_ros/Multispectral" messages. Then publish the image processing results (images as "micasense_ros/Multispectral") on the "detect_viewer" topic and detected point on the "detect_point" topic (point as "geometry_msgs/point" with x,y as image pixels and z as altitude).')
 	## Check validation of inputs
 	check_inputs()
 	while True:
+		listener_new()
 		if rospy.is_shutdown():
 			print("\nYou pressed Ctrl + C (ROS node stopped).")
 			break

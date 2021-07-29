@@ -22,7 +22,7 @@ import json
 # TODO: panel calibration, alignment quality auto checking
 
 host = "http://192.168.1.83"
-path = "/home/dji/SAR/data/"
+#path = "/home/dji/SAR/data/"
 
 pub=rospy.Publisher('capture_data', Multispectral, queue_size=10)
 rospy.init_node('micontrol', anonymous=False, disable_signals=False)
@@ -78,7 +78,7 @@ def check_connection():
 			attempt-=1
 			print ("Camera is not connected...")
 
-def capture_bands(resp, altitude, latitude, longitude):
+def capture_bands(resp, altitude, latitude, longitude, GPS_source):
 	try:
 		global total_captures
 		global store_capture
@@ -88,12 +88,23 @@ def capture_bands(resp, altitude, latitude, longitude):
 		capture_id = requests.post(host + "/capture" , json={"store_capture":store_capture } , timeout=3).json()["id"]
 		#print(capture_id)
 		startTime = datetime.now()
+		if rospy.is_shutdown():
+			#camera_powerdown_ready()
+			print("\nYou pressed Ctrl + C (ROS node stopped).")
+			return None
+		print("111111111111111111111111111111")
+		capture_status=str(requests.get(host + "/capture/%s" % (str(capture_id)), timeout=3).json()["status"])
 		## Waiting for capture complete status
-		while str(requests.get(host + "/capture/%s" % (str(capture_id)), timeout=3).json()["status"]) != "complete" :
+		while  capture_status != "complete" :
 			tdelta = datetime.now() - startTime
+			if rospy.is_shutdown():
+				#camera_powerdown_ready()
+				print("\nYou pressed Ctrl + C (ROS node stopped).")
+				return None
 			if(tdelta.total_seconds() >= 5):
 				## Check if the problem is becouse of the panel_detection
 				detect_panel_status = requests.get(host + "/detect_panel", timeout=3).json()["detect_panel"]
+				time.sleep(0.1)
 				if detect_panel_status== True :
 					detect_panel_status = requests.post(host + "/detect_panel", json={"abort_detect_panel":True}, timeout=3).json()["detect_panel"]
 					print("Panel detection was True, now it is %s. Capturing new images..." % str(detect_panel_status) )
@@ -101,21 +112,26 @@ def capture_bands(resp, altitude, latitude, longitude):
 					startTime = datetime.now()
 				else:
 					#camera_powerdown_ready()
-					raise Exception ("Capturing is not possible.")
+					print ("Capturing is not possible.")
+					return None
+			time.sleep(0.1)
+			capture_status=str(requests.get(host + "/capture/%s" % (str(capture_id)), timeout=3).json()["status"])
+		print("222222222222222222222222222222222")
 		ti=rospy.get_rostime()
 		captured_bands.capture_id=str(capture_id)
 		if resp["utc_time_valid"] == True:
 			captured_bands.time_string=str(resp["utc_time"]) ## TODO: change string to time
 		else:
 			captured_bands.time_string="Warning" 
-		if (altitude is not None) and (latitude is not None) and (longitude is not None):
+		if GPS_source!="Unknown":
 			captured_bands.altitude= altitude
 			captured_bands.latitude= latitude
 			captured_bands.longitude= longitude
 		else:
-			captured_bands.altitude= None
-			captured_bands.latitude= None
-			captured_bands.longitude= None
+			captured_bands.altitude= 0.0
+			captured_bands.latitude= 0.0
+			captured_bands.longitude= 0.0
+		captured_bands.GPS_source=GPS_source
 		capture_data = requests.get(host + "/capture/%s" % (str(capture_id)), timeout=3).json()
 		## Check the status of the SD card (file location/name will change)
 		if (resp["sd_status"]=="Ok") and (store_capture==True):
@@ -131,16 +147,21 @@ def capture_bands(resp, altitude, latitude, longitude):
 			captured_bands.file_name=cap_name
 			cap_name=cap_name.replace("/","-")
 			## Publish captured bands on ROS
+			print("333333333333333333333333333333333333")
 			for imageIndex in range(1,6):
-				imresp = requests.get(host + str(capture_data["raw_cache_path"][str(imageIndex)]), stream=True).raw
-				npimg = np.asarray(bytearray(imresp.read()), dtype="uint8")
+				try:
+					imresp = requests.get(host + str(capture_data["raw_cache_path"][str(imageIndex)]), stream=True, timeout=3).raw
+					npimg = np.asarray(bytearray(imresp.read()), dtype="uint8")
+				except:
+					print("Capture Error!")
+					return None
 				#img = cv2.imdecode(npimg, cv2.IMREAD_COLORL)
 				#img = cv2.imdecode(npimg, cv2.IMREAD_GRAYSCALE)
-				img = cv2.imdecode(npimg, cv2.LOAD_IMAGE_UNCHANGED)
+				img = cv2.imdecode(npimg, cv2.IMREAD_UNCHANGED)
 				#if (img[:,:,0] == img[:,:,1]).all:
 				#	print("+++++++++++++++++++++++++++++++++")
-				img=img[:,:,0]
-				msg = bridge.cv2_to_imgmsg(img,"8UC1")
+				#img=img[:,:,0]
+				msg = bridge.cv2_to_imgmsg(img,"16UC1")
 				#captured_bands.raw_np_bands.append(npimg)
 				captured_bands.raw_bands.append(msg)
 				#captured_bands.raw_bands.append(npimg)
@@ -161,15 +182,17 @@ def capture_bands(resp, altitude, latitude, longitude):
 					print("\nYou pressed Ctrl + C (ROS node stopped).")
 					return None
 			#print("===========================")
+			print("444444444444444444444444444444444444444")
 			pub.publish(captured_bands)
 		else:
 			cap_name = None
 		return cap_name
 	except requests.exceptions.RequestException:
-		raise Exception ("Camera did not respond to the capture command!")
+		print("Camera did not respond to the capture command!")
+		return None
 	except:
 		print("Publish captured bands failed!")
-		raise
+		return None
 
 def capture_panel(resp):
 	try:
@@ -184,9 +207,19 @@ def capture_panel(resp):
 		#print(capture_id)
 		startTime = datetime.now()
 		panel_captured = False
+		if rospy.is_shutdown():
+			#camera_powerdown_ready()
+			print("\nYou pressed Ctrl + C (ROS node stopped).")
+			return None, None
 		print("Searching for the panel in next %d seconds..." %(DEFAULT_PANEL_TIMER))
+		capture_status=str(requests.get(host + "/capture/%s" % (str(capture_id)), timeout=3).json()["status"])
 		## Waiting for capture complete status
-		while (str(requests.get(host + "/capture/%s" % (str(capture_id)), timeout=3).json()["status"]) != "complete") and (detect_panel_status==True) :
+		while ( capture_status != "complete") and (detect_panel_status==True) :
+			time.sleep(0.1)
+			if rospy.is_shutdown():
+				#camera_powerdown_ready()
+				print("\nYou pressed Ctrl + C (ROS node stopped).")
+				return None, None
 			detect_panel_status = requests.get(host + "/detect_panel", timeout=3).json()["detect_panel"]
 			tdelta = datetime.now() - startTime
 			capture_id = requests.post(host + "/capture", json={"store_capture":store_capture}, timeout=3).json()["id"]
@@ -202,7 +235,9 @@ def capture_panel(resp):
 					detect_panel_status = requests.post(host + "/detect_panel", json={"abort_detect_panel":True}, timeout=3).json()["detect_panel"]
 					print("Panel detection was True, but camera did not detect the panel after %d seconds. Now it is %s." % (DEFAULT_PANEL_TIMER , str(detect_panel_status)) )
 					panel_captured = False
-		if (str(requests.get(host + "/capture/%s" % (str(capture_id)), timeout=3).json()["status"]) == "complete"):
+			time.sleep(0.1)
+			capture_status=str(requests.get(host + "/capture/%s" % (str(capture_id)), timeout=3).json()["status"])
+		if (capture_status == "complete"):
 			panel_captured = True
 			print("Panel detected.")
 			ti=rospy.get_rostime()
@@ -226,15 +261,19 @@ def capture_panel(resp):
 				cap_name=cap_name.replace("/","-")
 				## Publish captured bands on ROS
 				for imageIndex in range(1,6):
-					imresp = requests.get(host + str(capture_data["raw_cache_path"][str(imageIndex)]), stream=True).raw
-					npimg = np.asarray(bytearray(imresp.read()), dtype="uint8")
-					#img = cv2.imdecode(npimg, cv2.CV_LOAD_IMAGE_UNCHANGED)
+					try:
+						imresp = requests.get(host + str(capture_data["raw_cache_path"][str(imageIndex)]), stream=True).raw
+						npimg = np.asarray(bytearray(imresp.read()), dtype="uint8")
+					except:
+						print("Capture Error!")
+						return None, None
+					img = cv2.imdecode(npimg, cv2.CV.IMREAD_UNCHANGED)
 					#img = cv2.imdecode(npimg, cv2.IMREAD_GRAYSCALE)
-					img = cv2.imdecode(npimg, cv2.IMREAD_COLOR)
+					#img = cv2.imdecode(npimg, cv2.IMREAD_COLOR)
 					#if (img[:,:,0] == img[:,:,1]).all:
 					#	print("+++++++++++++++++++++++++++++++++")
-					img=img[:,:,0]
-					msg = bridge.cv2_to_imgmsg(img,"8UC1")
+					#img=img[:,:,0]
+					msg = bridge.cv2_to_imgmsg(img,"16UC1")
 					#captured_bands.raw_np_bands.append(npimg)
 					captured_bands.raw_bands.append(msg)
 					#captured_bands.raw_bands.append(npimg)
@@ -253,7 +292,7 @@ def capture_panel(resp):
 					if rospy.is_shutdown():
 						#camera_powerdown_ready()
 						print("\nYou pressed Ctrl + C (ROS node stopped).")
-						return None
+						return None, None
 				#print("===========================")
 			else:
 				cap_name= None
@@ -264,10 +303,11 @@ def capture_panel(resp):
 			captured_bands=None
 			return cap_name , captured_bands
 	except requests.exceptions.RequestException:
-		raise Exception ("Camera did not respond to the capture panel command!")
+		print("Camera did not respond to the capture panel command!")
+		return None, None
 	except:
 		print("Publish captured panel failed!")
-		raise
+		return None, None
 
 def loadFiveBand(imgPath):
 	## imgPath = image address in memory contating its name without _{}.tif
@@ -282,6 +322,10 @@ def loadFiveBand(imgPath):
 		captured_bands.capture_id=cap_name
 		captured_bands.file_name=imgPath
 		captured_bands.time_string="Memory"
+		captured_bands.altitude=0.0
+		captured_bands.latitude=0.0
+		captured_bands.longitude=0.0
+		captured_bands.GPS_source="Unknown"
 		for imageIndex in range(1,6):
 			imFilename = imgPath+"_{}.tif".format(imageIndex)
 			im = cv2.imread(imFilename)
@@ -388,16 +432,16 @@ if __name__ == '__main__':
 		check_inputs()
 	#try:
 		lastAltitude=None
-		altitude=None
-		latitude=None
-		longitude=None
-		captured_panel=Multispectral()
+		altitude=0.0
+		latitude=0.0
+		longitude=0.0
+		
 		lastCaptureTime=datetime.now()
 		lastCheckedTime=datetime.now()
 		lastPrintTime=datetime.now()
 		capturing = False
 		panel_captured = False
-		GPS_source=None
+		GPS_source="Unknown"
 		capture_panel_implimented = False
 		start_time=datetime.now()
 		resp=None
@@ -428,8 +472,10 @@ if __name__ == '__main__':
 				resp=check_connection()		
 				## Capture new images by camera (Ethernet) and publish them on ROS topic
 				if (resp is not None):
+					captured_panel=Multispectral()
 					if configured==False:
 						config_status = requests.post(host + "/config", json={"operating_alt":args.operating_alt , "operating_alt_tolerance":args.oalt_tolerance , "auto_cap_mode":"timer" , "timer_period":args.timer_period , "enabled_bands_jpeg":enabled_bands_jpeg , "enabled_bands_raw":enabled_bands_raw , "raw_format":"TIFF" , "streaming_allowed":"False" , "streaming_enable":"False"}, timeout=5).json()
+						print("")
 						if args.altitude_flag==1:
 							print("operating_alt:" + str(config_status["operating_alt"]))
 							print("operating_alt_tolerance: " + str(config_status["operating_alt_tolerance"]))
@@ -441,7 +487,7 @@ if __name__ == '__main__':
 						print("streaming_allowed: " + str(config_status["streaming_allowed"]))
 						print("streaming_enable: " + str(config_status["streaming_enable"]))
 						print("store_capture: " + ["False","True"][args.store_mod])
-						raw_input("Press any key to start!")
+						raw_input("\nPress any key to start!")
 						configured=True
 
 					print("SD:{:.2f}GB, Storage:{}, Altitude Flag:{}, GPS warn:{}, Panel Detection:{}, Panel detected:{}".format(
@@ -455,7 +501,7 @@ if __name__ == '__main__':
 					print("Start time: ",start_time)
 					print("Capture period: %.2fs" % period_time)
 					print("Total captured sets: %d" % total_captures)
-					if altitude is None:
+					if GPS_source=="Unknown":
 						print("Current Altitude: Unknown")
 					else:
 						print("Current Altitude: %.2f" % altitude)
@@ -505,26 +551,26 @@ if __name__ == '__main__':
 						#			longitude=resp["gps_lon"]
 						#			GPS_source="DLS"
 						#		else: ## If positioning was not accurate
-						#			GPS_source=None
-						#			altitude=None
-						#			latitude=None
-						#			longitude=None
+						#			GPS_source="Unknown"
+						#			altitude=0.0
+						#			latitude=0.0
+						#			longitude=0.0
 						#	else:
 						#		GPS_rostopic_received=False
 
 						if GPS_rostopic_received==False:	
 							if (resp["dls_status"]!="Ok") or (resp["gps_warn"]==True) or (resp["p_acc"]>DEFAULT_P_ACC):
-								altitude=None
-								latitude=None
-								longitude=None
-								GPS_source=None
+								altitude=0.0
+								latitude=0.0
+								longitude=0.0
+								GPS_source="Unknown"
 							else:
 								altitude=resp["alt_agl"]
 								latitude=resp["gps_lat"]
 								longitude=resp["gps_lon"]
 								GPS_source="DLS"
 						
-						if altitude is not None:
+						if GPS_source!="Unknown":
 							## Checking the operating altitude for capturing
 							if altitude >= (args.operating_alt + args.oalt_tolerance):
 								capturing= True
@@ -536,20 +582,22 @@ if __name__ == '__main__':
 							lastCheckedTime=datetime.now()
 							print("DLS position accuarcy is: %fm" %resp["p_acc"])
 							#print("GPS_ROS position accuarcy is: %fm" % GPS_rostopic.p_acc)
-							print("Altitude is Unkown and Altitude flag is 1.")
+							print("Altitude is Unknown and Altitude flag is 1.")
 							print("Waiting for", end=' ')
 					else:
 						capturing=True
 				
 					if capturing:
 						## Capture if altitude_flag is 0 or the position is accurate and above the operating range
-						cap_name = capture_bands(resp, altitude, latitude, longitude)
+						cap_name = capture_bands(resp, altitude, latitude, longitude, GPS_source)
 						if cap_name is not None:
 							lastCaptureTime=datetime.now()
 							total_captures+=1
 							captured = True
-						if altitude is not None:
-							lastAltitude=altitude							
+						if GPS_source!="Unknown":
+							lastAltitude=altitude
+						else:
+							lastAltitude=None
 
 				else:
 					print("Camera is not connected AND load images from memory is not requested")
