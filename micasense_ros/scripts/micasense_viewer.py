@@ -18,7 +18,8 @@ warnings.filterwarnings("ignore")
 
 parser = argparse.ArgumentParser()
 
-parser.add_argument("-band", "--band", dest = "band_flag", help="Which band to view: 1(=band 1),..., 5(=band 5), 0(=all). (default: 0)",type=int, default=0, choices=range(6))
+parser.add_argument("-b", "--band", dest = "band_flag", help="Which band to view: 1(=band 1),..., 5(=band 5), 0(=all). (default: 0)",type=int, default=0, choices=range(6))
+parser.add_argument("-s", "--size", dest = "resize", help="Percentage of resize: from 20 to 100 (default: 100)",type=int, default=100, choices=range(20,101), metavar='PERCENT')
 
 plt.rcParams['toolbar'] = 'None'
 BAND_NAME = ('Blue','Green','Red','NIR','RedEdge')
@@ -65,6 +66,7 @@ def callback(bands):
 		global platformRelease
 		global process_done
 		global band_flag
+		global resize_per
 		if not rospy.is_shutdown():
 			for imageIndex in range(5):
 				print("........................")
@@ -78,8 +80,8 @@ def callback(bands):
 				process_done=True
 				lastShowTime=datetime.now()
 				### lowspeed loop!
-				width = int(bands.raw_bands[0].width * 20 / 100)
-				height = int(bands.raw_bands[0].height * 20 / 100)
+				width = int(bands.raw_bands[0].width * resize_per / 100)
+				height = int(bands.raw_bands[0].height * resize_per / 100)
 				dim = (width, height)
 				if band_flag==0:
 					for i, axs in enumerate(fig.axes):
@@ -90,14 +92,14 @@ def callback(bands):
 				else:
 					for i, axs in enumerate(fig.axes):
 						imcv=bridge.imgmsg_to_cv2(bands.raw_bands[band_flag-1],"16UC1")
-						axs.imshow(imcv)
+						new_image = cv2.resize(imcv, dim)
+						axs.imshow(new_image)
 				###
 				#print("===========================")
-				#plt.suptitle('Bands sequence: %d' %(bands.raw_bands[0].header.seq),va="top", ha="right")
-				#if bands.GPS_source == "Unknown":
-				#	plt.suptitle("Seq.: %d" %(bands.raw_bands[0].header.seq) + "     File Name: "+bands.file_name+"     ID: "+bands.capture_id+"     Time: " + bands.time_string + "     GPS source: %s" %(bands.GPS_source),backgroundcolor='0.75',ha="center", va="top")
-				#else:
-				plt.suptitle("Seq.: %d" %(bands.raw_bands[0].header.seq) + "     File Name: "+bands.file_name+"     ID: "+bands.capture_id+"     Time: " + bands.time_string + "     GPS source: %s" %(bands.GPS_source) + "     Altitude: %.2f" % (bands.altitude) ,backgroundcolor='0.75',ha="center", va="top")
+				if bands.GPS_source == "Unknown":
+					plt.suptitle("Seq.: %d" %(bands.raw_bands[0].header.seq) + "     File Name: "+bands.file_name+"     ID: "+bands.capture_id+"     Time: " + bands.time_string + "     GPS source: %s" %(bands.GPS_source),backgroundcolor='0.75',ha="center", va="top")
+				else:
+					plt.suptitle("Seq.: %d" %(bands.raw_bands[0].header.seq) + "     File Name: "+bands.file_name+"     ID: "+bands.capture_id+"     Time: " + bands.time_string + "     GPS source: %s" %(bands.GPS_source) + "     Altitude: %.2f" % (bands.altitude) ,backgroundcolor='0.75',ha="center", va="top")
 				plt.draw()
 				process_done=False
 
@@ -113,9 +115,10 @@ if __name__ == '__main__':
 	lastShowTime=datetime.now()
 	rospy.init_node('mviewer',anonymous=False,disable_signals=False)
 	rospy.Subscriber("capture_data",Multispectral,receivecallback)
-	#rospy.Subscriber("panel_data",Multispectral,callback)
+
 	init_flag=False
 	band_flag=args.band_flag
+	resize_per=args.resize
 	while True:
 		if rospy.is_shutdown():
 			print("\nYou pressed Ctrl + C (ROS node stopped), close the figure window to exit.")
