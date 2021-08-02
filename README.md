@@ -30,6 +30,12 @@ natsort
 sudo apt-get install python-natsort
 ```
 
+Also installing the imutils for python 2 is required, to do so
+```bash
+sudo apt install python-pip
+pip2 install --upgrade imutils
+```
+
 ## Usage
 Different options are considered for this code:
 Address option: if provided, the alignment, cropping, and detection will be used for images in the address (instead of the camera). e.g. If the name of a set of files be like NAME_1.tif to NAME_5.tif, only the NAME of the file should be entered (without _#.tif)
